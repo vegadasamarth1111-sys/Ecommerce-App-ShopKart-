@@ -1,8 +1,20 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers import auth, products, cart, orders, admin
+from app.db.mongodb import connect_db, close_db
 
-app = FastAPI(title="Ecommerce API", version="1.0.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: connect to MongoDB
+    await connect_db()
+    yield
+    # Shutdown: close connection
+    await close_db()
+
+
+app = FastAPI(title="Ecommerce API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -22,3 +34,4 @@ app.include_router(admin.router,    prefix="/api/admin",    tags=["Admin"])
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
+
