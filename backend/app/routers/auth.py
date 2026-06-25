@@ -11,7 +11,20 @@ router = APIRouter()
 @router.post("/register", response_model=Token)
 async def register(data: UserRegister):
     db = get_db()
-    existing = await db.users.find_one({"email": data.email})
+    if db is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Database not available. Please ensure MongoDB is running."
+        )
+
+    try:
+        existing = await db.users.find_one({"email": data.email})
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Database error: {str(e)}"
+        )
+
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
 
@@ -22,17 +35,46 @@ async def register(data: UserRegister):
         "role": "customer",
         "created_at": datetime.utcnow(),
     }
-    result = await db.users.insert_one(user)
-    token = create_access_token({"sub": str(result.inserted_id), "role": "customer"})
+
+    try:
+        result = await db.users.insert_one(user)
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Could not create account: {str(e)}"
+        )
+
+    token = create_access_token({
+        "sub": str(result.inserted_id),
+        "role": "customer",
+        "name": data.name,
+    })
     return {"access_token": token}
 
 
 @router.post("/login", response_model=Token)
 async def login(data: UserLogin):
     db = get_db()
-    user = await db.users.find_one({"email": data.email})
-    if not user or not verify_password(data.password, user["password_hash"]):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+    if db is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Database not available. Please ensure MongoDB is running."
+        )
 
-    token = create_access_token({"sub": str(user["_id"]), "role": user["role"]})
+    try:
+        user = await db.users.find_one({"email": data.email})
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Database error: {str(e)}"
+        )
+
+    if not user or not verify_password(data.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    token = create_access_token({
+        "sub": str(user["_id"]),
+        "role": user["role"],
+        "name": user.get("name", ""),
+    })
     return {"access_token": token}
