@@ -1,19 +1,19 @@
-import "bootstrap/dist/css/bootstrap.min.css";
 import "../styles/globals.css";
 import Navbar from "../components/Navbar";
-import { useEffect } from "react";
+import Footer from "../components/Footer";
+import { ToastProvider } from "../lib/toast";
 
 export default function App({ Component, pageProps }) {
-  useEffect(() => {
-    require("bootstrap/dist/js/bootstrap.bundle.min.js");
-  }, []);
+  // Pages that have their own full-screen layouts (no footer)
+  const noFooter = Component.noFooter;
 
   return (
-    <>
-      <Navbar />
-      <main>
+    <ToastProvider>
+      <div className="page-wrapper">
+        <Navbar />
         <Component {...pageProps} />
-      </main>
-    </>
+        {!noFooter && <Footer />}
+      </div>
+    </ToastProvider>
   );
 }
