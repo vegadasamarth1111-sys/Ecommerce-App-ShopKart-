@@ -1,0 +1,424 @@
+{
+  "name": "ECommerce Backend Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "order-placed",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-order-placed",
+      "name": "🛒 Order Placed Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "order-placed-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ─── Validate & Enrich Incoming Order Data ───\nconst body = $input.first().json.body || $input.first().json;\n\n// Required fields check\nconst required = ['order_id', 'user_email', 'user_name', 'total_amount', 'items'];\nconst missing = required.filter(f => !body[f]);\nif (missing.length > 0) {\n  throw new Error(`Missing required fields: ${missing.join(', ')}`);\n}\n\n// Build readable items list\nconst itemLines = (body.items || []).map(i =>\n  `• ${i.product_name} × ${i.quantity} — ₹${parseFloat(i.price_at_purchase).toFixed(2)}`\n).join('\\n');\n\nconst now = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });\n\nreturn [{\n  json: {\n    order_id:       body.order_id,\n    user_email:     body.user_email,\n    user_name:      body.user_name,\n    total_amount:   parseFloat(body.total_amount).toFixed(2),\n    status:         body.status || 'pending',\n    shipping_name:  body.shipping_full_name || body.user_name,\n    shipping_addr:  `${body.shipping_address}, ${body.shipping_city}, ${body.shipping_state} - ${body.shipping_pincode}`,\n    shipping_phone: body.shipping_phone || 'N/A',\n    items_text:     itemLines,\n    items_count:    (body.items || []).length,\n    placed_at:      now,\n    raw_items:      body.items || []\n  }\n}];"
+      },
+      "id": "validate-order",
+      "name": "✅ Validate & Enrich Order",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-total",
+              "leftValue": "={{ $json.total_amount }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-valid-order",
+      "name": "🔍 Is Valid Order?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [720, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "spreadsheet",
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $env.GOOGLE_SHEET_ID }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Orders",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Order ID":       "={{ $json.order_id }}",
+            "Customer Name":  "={{ $json.user_name }}",
+            "Customer Email": "={{ $json.user_email }}",
+            "Total (₹)":     "={{ $json.total_amount }}",
+            "Status":         "={{ $json.status }}",
+            "Items Count":    "={{ $json.items_count }}",
+            "Shipping Address": "={{ $json.shipping_addr }}",
+            "Phone":          "={{ $json.shipping_phone }}",
+            "Placed At":      "={{ $json.placed_at }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "save-to-sheets",
+      "name": "📊 Save to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [960, 180],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "google-sheets-cred",
+          "name": "Google Sheets (OAuth2)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.SENDER_EMAIL }}",
+        "toEmail": "={{ $json.user_email }}",
+        "subject": "=✅ Order Confirmed! #{{ $json.order_id }} — Thank you {{ $json.user_name }}",
+        "emailType": "html",
+        "message": "=<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"UTF-8\">\n<style>\n  body { font-family: 'Segoe UI', sans-serif; background: #f4f4f4; margin: 0; padding: 0; }\n  .container { max-width: 600px; margin: 30px auto; background: #fff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.1); }\n  .header { background: linear-gradient(135deg, #667eea, #764ba2); padding: 30px; text-align: center; color: white; }\n  .header h1 { margin: 0; font-size: 24px; }\n  .body { padding: 30px; }\n  .order-box { background: #f8f9ff; border-left: 4px solid #667eea; padding: 16px; border-radius: 8px; margin: 20px 0; }\n  .items { width: 100%; border-collapse: collapse; margin-top: 16px; }\n  .items th { background: #667eea; color: white; padding: 10px; text-align: left; }\n  .items td { padding: 10px; border-bottom: 1px solid #eee; }\n  .total-row { font-weight: bold; font-size: 16px; }\n  .footer { background: #f8f9ff; padding: 20px; text-align: center; color: #666; font-size: 13px; }\n  .badge { display: inline-block; background: #22c55e; color: white; padding: 4px 12px; border-radius: 20px; font-size: 13px; }\n</style>\n</head>\n<body>\n<div class=\"container\">\n  <div class=\"header\">\n    <h1>🛍️ Order Confirmed!</h1>\n    <p style=\"margin:8px 0 0\">Your order has been received successfully</p>\n  </div>\n  <div class=\"body\">\n    <p>Hi <strong>{{ $json.user_name }}</strong> 👋</p>\n    <p>Thank you for your purchase! Here's your order summary:</p>\n    <div class=\"order-box\">\n      <p><strong>Order ID:</strong> #{{ $json.order_id }}</p>\n      <p><strong>Status:</strong> <span class=\"badge\">{{ $json.status }}</span></p>\n      <p><strong>Placed At:</strong> {{ $json.placed_at }}</p>\n      <p><strong>Shipping To:</strong> {{ $json.shipping_addr }}</p>\n      <p><strong>Phone:</strong> {{ $json.shipping_phone }}</p>\n    </div>\n    <h3>📦 Items Ordered</h3>\n    <pre style=\"background:#f8f9ff;padding:12px;border-radius:8px;font-size:14px\">{{ $json.items_text }}</pre>\n    <div style=\"text-align:right;margin-top:16px;font-size:18px;font-weight:bold;color:#667eea\">\n      Total: ₹{{ $json.total_amount }}\n    </div>\n    <hr style=\"margin:24px 0;border:none;border-top:1px solid #eee\">\n    <p style=\"color:#666;font-size:14px\">We'll notify you as soon as your order is shipped. If you have any questions, reply to this email.</p>\n  </div>\n  <div class=\"footer\">\n    <p>© 2025 ShopEasy · All rights reserved</p>\n    <p>You received this because you placed an order on our platform.</p>\n  </div>\n</div>\n</body>\n</html>",
+        "options": {}
+      },
+      "id": "send-customer-email",
+      "name": "📧 Email Customer",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [960, 320],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-cred",
+          "name": "SMTP (Gmail)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.SENDER_EMAIL }}",
+        "toEmail": "={{ $env.ADMIN_EMAIL }}",
+        "subject": "=🔔 New Order #{{ $json.order_id }} — ₹{{ $json.total_amount }} from {{ $json.user_name }}",
+        "emailType": "html",
+        "message": "=<div style=\"font-family:sans-serif;max-width:500px;margin:auto;padding:20px\">\n<h2 style=\"color:#667eea\">🛒 New Order Alert</h2>\n<table style=\"width:100%;border-collapse:collapse\">\n  <tr><td style=\"padding:8px;font-weight:bold\">Order ID</td><td>#{{ $json.order_id }}</td></tr>\n  <tr style=\"background:#f8f9ff\"><td style=\"padding:8px;font-weight:bold\">Customer</td><td>{{ $json.user_name }}</td></tr>\n  <tr><td style=\"padding:8px;font-weight:bold\">Email</td><td>{{ $json.user_email }}</td></tr>\n  <tr style=\"background:#f8f9ff\"><td style=\"padding:8px;font-weight:bold\">Phone</td><td>{{ $json.shipping_phone }}</td></tr>\n  <tr><td style=\"padding:8px;font-weight:bold\">Total</td><td style=\"color:#22c55e;font-weight:bold\">₹{{ $json.total_amount }}</td></tr>\n  <tr style=\"background:#f8f9ff\"><td style=\"padding:8px;font-weight:bold\">Items</td><td>{{ $json.items_count }} items</td></tr>\n  <tr><td style=\"padding:8px;font-weight:bold\">Shipping</td><td>{{ $json.shipping_addr }}</td></tr>\n  <tr style=\"background:#f8f9ff\"><td style=\"padding:8px;font-weight:bold\">Placed At</td><td>{{ $json.placed_at }}</td></tr>\n</table>\n<pre style=\"background:#f4f4f4;padding:12px;border-radius:8px;margin-top:16px\">{{ $json.items_text }}</pre>\n<p style=\"color:#666;font-size:13px;margin-top:20px\">Login to admin panel to process this order.</p>\n</div>",
+        "options": {}
+      },
+      "id": "notify-admin-email",
+      "name": "📨 Notify Admin",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [960, 460],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-cred",
+          "name": "SMTP (Gmail)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.DJANGO_BASE_URL }}/api/orders/{{ $json.order_id }}/status/",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Token {{ $env.DJANGO_API_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "status",
+              "value": "confirmed"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "update-order-status",
+      "name": "🔄 Update Order Status → Confirmed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [960, 600]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ─── Log success ───\nconst order = $('✅ Validate & Enrich Order').first().json;\nconsole.log(`[SUCCESS] Order #${order.order_id} processed at ${new Date().toISOString()}`);\n\nreturn [{\n  json: {\n    success: true,\n    message: `Order #${order.order_id} fully processed`,\n    order_id: order.order_id,\n    steps_completed: ['google_sheets', 'customer_email', 'admin_email', 'status_update'],\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "success-log",
+      "name": "✅ Success Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 390]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ─── Error handler — runs when order validation fails ───\nconst errMsg = $input.first().json.error || 'Invalid order data';\nconsole.error(`[ERROR] Invalid order rejected: ${errMsg}`);\n\nreturn [{\n  json: {\n    success: false,\n    error: errMsg,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "invalid-order-log",
+      "name": "❌ Invalid Order Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 740]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-webhook",
+      "name": "🔁 Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1440, 390]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "low-stock-alert",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-low-stock",
+      "name": "📦 Low Stock Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 900],
+      "webhookId": "low-stock-webhook"
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.SENDER_EMAIL }}",
+        "toEmail": "={{ $env.ADMIN_EMAIL }}",
+        "subject": "=⚠️ Low Stock Alert: {{ $json.body.product_name }} (Only {{ $json.body.stock_qty }} left)",
+        "emailType": "html",
+        "message": "=<div style=\"font-family:sans-serif;max-width:500px;margin:auto;padding:20px\">\n<h2 style=\"color:#f59e0b\">⚠️ Low Stock Alert</h2>\n<p>The following product is running low on inventory:</p>\n<table style=\"width:100%;border-collapse:collapse\">\n  <tr><td style=\"padding:8px;font-weight:bold\">Product</td><td>{{ $json.body.product_name }}</td></tr>\n  <tr style=\"background:#fef3c7\"><td style=\"padding:8px;font-weight:bold\">Stock Left</td><td style=\"color:#dc2626;font-weight:bold\">{{ $json.body.stock_qty }} units</td></tr>\n  <tr><td style=\"padding:8px;font-weight:bold\">Product ID</td><td>{{ $json.body.product_id }}</td></tr>\n  <tr style=\"background:#fef3c7\"><td style=\"padding:8px;font-weight:bold\">Category</td><td>{{ $json.body.category }}</td></tr>\n  <tr><td style=\"padding:8px;font-weight:bold\">Price</td><td>₹{{ $json.body.price }}</td></tr>\n</table>\n<p style=\"color:#666;font-size:13px;margin-top:20px\">Please restock soon to avoid losing sales.</p>\n</div>",
+        "options": {}
+      },
+      "id": "low-stock-email",
+      "name": "⚠️ Low Stock Alert Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [480, 900],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-cred",
+          "name": "SMTP (Gmail)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"success\": true, \"message\": \"Low stock alert sent\"}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-low-stock",
+      "name": "🔁 Respond Low Stock",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [720, 900]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "new-user-registered",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-new-user",
+      "name": "👤 New User Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 1080],
+      "webhookId": "new-user-webhook"
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.SENDER_EMAIL }}",
+        "toEmail": "={{ $json.body.email }}",
+        "subject": "=👋 Welcome to ShopEasy, {{ $json.body.first_name || $json.body.username }}!",
+        "emailType": "html",
+        "message": "=<!DOCTYPE html>\n<html>\n<head><meta charset=\"UTF-8\"></head>\n<body style=\"font-family:'Segoe UI',sans-serif;background:#f4f4f4;margin:0;padding:0\">\n<div style=\"max-width:600px;margin:30px auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.1)\">\n  <div style=\"background:linear-gradient(135deg,#667eea,#764ba2);padding:40px;text-align:center;color:white\">\n    <h1 style=\"margin:0;font-size:28px\">Welcome to ShopEasy! 🎉</h1>\n    <p style=\"margin:12px 0 0;opacity:0.9\">Your account is ready</p>\n  </div>\n  <div style=\"padding:30px\">\n    <p>Hi <strong>{{ $json.body.first_name || $json.body.username }}</strong> 👋</p>\n    <p>We're thrilled to have you on board. Start exploring thousands of products at the best prices!</p>\n    <div style=\"background:#f8f9ff;border-radius:8px;padding:20px;margin:20px 0;text-align:center\">\n      <h3 style=\"color:#667eea;margin:0 0 8px\">🛍️ Ready to shop?</h3>\n      <p style=\"color:#666;margin:0\">Browse our latest collection and grab the best deals</p>\n      <a href=\"{{ $env.FRONTEND_URL }}\" style=\"display:inline-block;margin-top:16px;background:linear-gradient(135deg,#667eea,#764ba2);color:white;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:bold\">Shop Now →</a>\n    </div>\n    <p style=\"color:#666;font-size:14px\">If you didn't create this account, please ignore this email.</p>\n  </div>\n  <div style=\"background:#f8f9ff;padding:20px;text-align:center;color:#666;font-size:13px\">\n    <p>© 2025 ShopEasy · All rights reserved</p>\n  </div>\n</div>\n</body>\n</html>",
+        "options": {}
+      },
+      "id": "welcome-email",
+      "name": "🎉 Welcome Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [480, 1080],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-cred",
+          "name": "SMTP (Gmail)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"success\": true, \"message\": \"Welcome email sent\"}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-welcome",
+      "name": "🔁 Respond Welcome",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [720, 1080]
+    }
+  ],
+  "connections": {
+    "🛒 Order Placed Webhook": {
+      "main": [
+        [
+          { "node": "✅ Validate & Enrich Order", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "✅ Validate & Enrich Order": {
+      "main": [
+        [
+          { "node": "🔍 Is Valid Order?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "🔍 Is Valid Order?": {
+      "main": [
+        [
+          { "node": "📊 Save to Google Sheets", "type": "main", "index": 0 },
+          { "node": "📧 Email Customer", "type": "main", "index": 0 },
+          { "node": "📨 Notify Admin", "type": "main", "index": 0 },
+          { "node": "🔄 Update Order Status → Confirmed", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "❌ Invalid Order Response", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "📊 Save to Google Sheets": {
+      "main": [
+        [
+          { "node": "✅ Success Response", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "📧 Email Customer": {
+      "main": [
+        [
+          { "node": "✅ Success Response", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "📨 Notify Admin": {
+      "main": [
+        [
+          { "node": "✅ Success Response", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "🔄 Update Order Status → Confirmed": {
+      "main": [
+        [
+          { "node": "✅ Success Response", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "✅ Success Response": {
+      "main": [
+        [
+          { "node": "🔁 Respond to Webhook", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "❌ Invalid Order Response": {
+      "main": [
+        [
+          { "node": "🔁 Respond to Webhook", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "📦 Low Stock Webhook": {
+      "main": [
+        [
+          { "node": "⚠️ Low Stock Alert Email", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "⚠️ Low Stock Alert Email": {
+      "main": [
+        [
+          { "node": "🔁 Respond Low Stock", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "👤 New User Webhook": {
+      "main": [
+        [
+          { "node": "🎉 Welcome Email", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "🎉 Welcome Email": {
+      "main": [
+        [
+          { "node": "🔁 Respond Welcome", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "staticData": null,
+  "tags": [
+    { "name": "ecommerce" },
+    { "name": "automation" },
+    { "name": "free-tier" }
+  ],
+  "triggerCount": 3,
+  "updatedAt": "2026-06-23T10:00:00.000Z",
+  "versionId": "1"
+}
