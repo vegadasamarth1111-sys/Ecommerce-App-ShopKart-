@@ -10,7 +10,7 @@ const links = [
 export default function AdminSidebar() {
   const router = useRouter();
   return (
-    <aside className="admin-sidebar d-none d-md-block">
+    <aside className="admin-sidebar" style={{ display: "block" }}>
       <div className="brand">⚙ Admin Panel</div>
       {links.map((l) => (
         <Link
